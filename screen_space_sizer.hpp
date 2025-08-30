@@ -8,7 +8,7 @@ class ScreenSpaceSizer {
   public:
     enum class Size { Large, Medium, Small };
 
-    explicit ScreenSpaceSizer(const FPSCamera &cam, const unsigned int &screen_width_px,
+    explicit ScreenSpaceSizer(const ICamera &cam, const unsigned int &screen_width_px,
                               const unsigned int &screen_height_px)
         : camera(cam), screen_width_px(screen_width_px), screen_height_px(screen_height_px) {}
 
@@ -81,7 +81,7 @@ class ScreenSpaceSizer {
     }
 
   private:
-    const FPSCamera &camera;
+    const ICamera &camera;
     const unsigned int &screen_width_px, &screen_height_px;
 
     // TODO: don't need this function just need a function that takes in a mat and and a vector of vec3s and applies to
@@ -100,7 +100,7 @@ class ScreenSpaceSizer {
     // TODO: move to vertex geom eventually.
     glm::vec2 project_to_ndc(const glm::vec3 &world_pos) const {
         glm::mat4 view = camera.get_view_matrix();
-        glm::mat4 proj = camera.get_projection_matrix(screen_width_px, screen_height_px);
+        glm::mat4 proj = camera.get_projection_matrix();
 
         glm::vec4 clip = proj * view * glm::vec4(world_pos, 1.0f);
         if (clip.w == 0.0f)
@@ -113,7 +113,7 @@ class ScreenSpaceSizer {
 
     glm::vec2 project_to_screen(const glm::vec3 &world_pos) const {
         glm::mat4 view = camera.get_view_matrix();
-        glm::mat4 proj = camera.get_projection_matrix(screen_width_px, screen_height_px);
+        glm::mat4 proj = camera.get_projection_matrix();
 
         glm::vec4 clip = proj * view * glm::vec4(world_pos, 1.0f);
         glm::vec3 ndc = glm::vec3(clip) / clip.w;
