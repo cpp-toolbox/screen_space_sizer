@@ -12,21 +12,56 @@ class ScreenSpaceSizer {
                               const unsigned int &screen_height_px)
         : camera(cam), screen_width_px(screen_width_px), screen_height_px(screen_height_px) {}
 
-    Size get_screen_size(std::vector<glm::vec3> xyz_positions, Transform transform) const {
+    // TODO: remove 3rd argument
+    Size get_screen_size(vertex_geometry::AxisAlignedBoundingBox &aabb, Transform &transform,
+                         bool two_dimensional_on_x_y = false) const {
 
-        auto local_aabb = vertex_geometry::AxisAlignedBoundingBox(xyz_positions);
-        float pixel_area = compute_screen_pixel_area(local_aabb, transform);
-        AABB2D pixel_bounding_box = compute_pixel_bounding_box(local_aabb, transform);
+        LogSection _(global_logger, "get_screen_size");
+
+        // float pixel_area = compute_screen_pixel_area(local_aabb, transform);
+        AABB2D pixel_bounding_box = compute_pixel_bounding_box(aabb, transform);
 
         float min_pixel_dimension = pixel_bounding_box.min_dimension();
 
-        if (min_pixel_dimension > 20.0f)
+        if (min_pixel_dimension > 10.0f)
             return Size::Large;
 
-        if (min_pixel_dimension > 10.0f)
+        if (min_pixel_dimension > 5.0f)
             return Size::Medium;
 
         return Size::Small;
+    }
+
+    bool smaller_than_pixel(const std::vector<glm::vec3> &xyz_positions, Transform &transform,
+                            bool two_dimensional_on_x_y = false) {
+        PROFILE_SECTION("smaller than pixel");
+        LogSection _(global_logger, "smaller_than_pixel");
+
+        vertex_geometry::AxisAlignedBoundingBox local_aabb;
+        {
+            PROFILE_SECTION("create aabb");
+            local_aabb = vertex_geometry::AxisAlignedBoundingBox(xyz_positions);
+        }
+        return smaller_than_pixel(local_aabb, transform);
+    }
+
+    bool smaller_than_pixel(const vertex_geometry::AxisAlignedBoundingBox &aabb, Transform &transform,
+                            bool two_dimensional_on_x_y = false) {
+        PROFILE_SECTION("smaller than pixel");
+        LogSection _(global_logger, "smaller_than_pixel");
+
+        AABB2D pixel_bounding_box;
+        {
+            PROFILE_SECTION("compute pixel bounding box");
+            // float pixel_area = compute_screen_pixel_area(local_aabb, transform);
+            pixel_bounding_box = compute_pixel_bounding_box(aabb, transform);
+        }
+
+        {
+            PROFILE_SECTION("min dimension");
+            float min_pixel_dimension = pixel_bounding_box.min_dimension();
+            return min_pixel_dimension < 1;
+        }
     }
 
     template <draw_info::IVPLike IVPX> draw_info::IndexedVertexPositions make_screen_space_ivp(IVPX &obj) const {
@@ -89,11 +124,20 @@ class ScreenSpaceSizer {
     std::array<glm::vec3, 8> get_aabb_corners_world(const vertex_geometry::AxisAlignedBoundingBox &box,
                                                     Transform &transform) const {
         glm::mat4 model = transform.get_transform_matrix();
-        std::array<glm::vec3, 8> corners = box.get_corners();
+
+        // Extract affine components of the matrix for faster transforms
+        glm::vec3 col0(model[0]); // X basis vector
+        glm::vec3 col1(model[1]); // Y basis vector
+        glm::vec3 col2(model[2]); // Z basis vector
+        glm::vec3 col3(model[3]); // Translation
+
+        std::array<glm::vec3, 8> corners = box.get_corners(); // Fills corners directly into provided array
+
         for (auto &c : corners) {
-            glm::vec4 world = model * glm::vec4(c, 1.0f);
-            c = glm::vec3(world);
+            // Equivalent to (model * vec4(c,1.0)) but cheaper
+            c = col0 * c.x + col1 * c.y + col2 * c.z + col3;
         }
+
         return corners;
     }
 
@@ -115,7 +159,9 @@ class ScreenSpaceSizer {
         glm::mat4 view = camera.get_view_matrix();
         glm::mat4 proj = camera.get_projection_matrix();
 
-        glm::vec4 clip = proj * view * glm::vec4(world_pos, 1.0f);
+        glm::mat4 transform = proj * view;
+
+        glm::vec4 clip = transform * glm::vec4(world_pos, 1.0f);
         glm::vec3 ndc = glm::vec3(clip) / clip.w;
 
         glm::vec2 screen;
@@ -140,25 +186,28 @@ class ScreenSpaceSizer {
     };
 
     AABB2D compute_pixel_bounding_box(const vertex_geometry::AxisAlignedBoundingBox &box, Transform &transform) const {
-        auto corners = get_aabb_corners_world(box, transform);
+        // Get transformed corners in world space
+        std::array<glm::vec3, 8> corners = get_aabb_corners_world(box, transform);
 
         float min_x = std::numeric_limits<float>::max();
         float min_y = std::numeric_limits<float>::max();
         float max_x = std::numeric_limits<float>::lowest();
         float max_y = std::numeric_limits<float>::lowest();
 
-        for (size_t i = 0; i < corners.size(); ++i) {
-            glm::vec2 screen = project_to_screen(corners[i]);
-
-            // clamp to viewport bounds
-            screen.x = std::clamp(screen.x, 0.0f, static_cast<float>(screen_width_px));
-            screen.y = std::clamp(screen.y, 0.0f, static_cast<float>(screen_height_px));
+        for (const auto &c : corners) {
+            glm::vec2 screen = project_to_screen(c);
 
             min_x = std::min(min_x, screen.x);
             max_x = std::max(max_x, screen.x);
             min_y = std::min(min_y, screen.y);
             max_y = std::max(max_y, screen.y);
         }
+
+        // clamp once at the end
+        min_x = std::clamp(min_x, 0.0f, static_cast<float>(screen_width_px));
+        max_x = std::clamp(max_x, 0.0f, static_cast<float>(screen_width_px));
+        min_y = std::clamp(min_y, 0.0f, static_cast<float>(screen_height_px));
+        max_y = std::clamp(max_y, 0.0f, static_cast<float>(screen_height_px));
 
         return {{min_x, min_y}, {max_x, max_y}};
     }
